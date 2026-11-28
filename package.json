@@ -67,6 +67,7 @@
     "db:stop": "npx supabase stop",
     "hooks:install": "git config core.hooksPath .githooks",
     "ci:check-action-pins": "node scripts/check-action-pins.mjs",
+    "ci:test-impact": "node scripts/test-impact.mjs",
     "contracts:check": "node scripts/check-schema-compat.mjs",
     "soroban:snapshot": "node scripts/soroban-schema-snapshot.mjs --write",
     "soroban:snapshot:check": "node scripts/soroban-schema-snapshot.mjs --check",
