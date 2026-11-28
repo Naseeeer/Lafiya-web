@@ -149,16 +149,18 @@ export async function runDispatchCycle(
 
   if (claimError) {
     logError("outbox: failed to claim batch", claimError);
-    return 0;
+    stats.durationMs = Date.now() - startedAt;
+    return stats;
   }
 
   if (!rows || rows.length === 0) {
-    return 0;
+    stats.durationMs = Date.now() - startedAt;
+    return stats;
   }
 
   logInfo("outbox: dispatching batch", { count: rows.length });
 
-  let dispatched = 0;
+  stats.claimed = rows.length;
 
   for (const row of rows as OutboxRow[]) {
     const key = `${row.aggregate}:${row.event_type}`;
@@ -207,7 +209,8 @@ export async function runDispatchCycle(
       // Acknowledge unknown event types so they don't clog the queue.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (admin as any).rpc("ack_outbox_row", { p_id: row.id });
-      dispatched++;
+      stats.dispatched++;
+      stats.latenciesMs.push(latencyMs(row));
       continue;
     }
 
@@ -215,8 +218,10 @@ export async function runDispatchCycle(
       await handler(row);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (admin as any).rpc("ack_outbox_row", { p_id: row.id });
-      dispatched++;
+      stats.dispatched++;
+      stats.latenciesMs.push(latencyMs(row));
     } catch (err) {
+      stats.failed++;
       // Leave dispatched_at = null; attempts was already incremented by
       // claim_outbox_batch, providing natural back-pressure visibility.
       logError("outbox: handler threw — row will be retried", err, {
