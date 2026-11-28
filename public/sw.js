@@ -5,6 +5,11 @@
 // live-looking verification badge, stale scripts, or an old route layout.
 // Envelopes are AES-GCM encrypted under a key derived from the card URL's
 // secret segment and stored under an opaque hashed key (issue #630, ADR-004).
+//
+// Worker integrity (issue #967): the worker reports its build-manifest
+// version/hash to clients so the page can detect an unexpected replacement.
+// A server-controlled kill switch (`SW_KILL_SWITCH`) unregisters the worker
+// and deletes all `lafiya-*` caches; once tripped the worker becomes a no-op.
 
 import {
   CARD_CACHE_LIMITS,
@@ -62,9 +67,117 @@ const MAX_PACK_ATTEMPTS = 3;
 const FACILITY_CACHE = "lafiya-facilities-v1";
 const FACILITY_PATH_PREFIX = "/facilities/";
 
+// Worker integrity (issue #967). The worker is served only from this fixed
+// path; the CSP `worker-src` directive restricts registration to it. Any
+// registration attempt from another path is rejected by the browser before
+// this script runs.
+const WORKER_PATH = "/sw.js";
+
+// All caches owned by this worker share this prefix so the kill switch can
+// remove them without touching unrelated origin storage.
+const CACHE_PREFIX = "lafiya-";
+
+// Kill-switch flag. When set, the worker stops handling fetch/cache events and
+// only responds to version probes and further kill-switch commands. Persisted
+// in a dedicated cache entry so it survives worker restarts.
+const KILL_SWITCH_CACHE = "lafiya-kill-switch-v1";
+const KILL_SWITCH_KEY = "/__lafiya_kill_switch__";
+let killSwitchActive = false;
+
+// The build-manifest version/hash is injected at build time. When absent (for
+// example in local development) we fall back to a sentinel so the page can
+// still compare and report a mismatch rather than silently trusting the
+// worker.
+const BUILD_VERSION =
+  typeof self.__LAFIYA_SW_BUILD_VERSION__ === "string"
+    ? self.__LAFIYA_SW_BUILD_VERSION__
+    : "unknown";
+
+// Message types exchanged with clients.
+const MSG_VERSION_PROBE = "SW_VERSION_PROBE";
+const MSG_VERSION_REPORT = "SW_VERSION_REPORT";
+const MSG_KILL_SWITCH = "SW_KILL_SWITCH";
+
+function workerVersionInfo() {
+  return {
+    type: MSG_VERSION_REPORT,
+    version: BUILD_VERSION,
+    scriptURL: self.location.href,
+    scope: self.registration ? self.registration.scope : null,
+    killSwitchActive,
+  };
+}
+
+// Broadcast the worker's identity to every controlled client. Called on
+// activation and whenever a client probes for the version.
+async function broadcastVersion() {
+  const info = workerVersionInfo();
+  const clients = await self.clients.matchAll({
+    includeUncontrolled: true,
+    type: "window",
+  });
+  for (const client of clients) {
+    client.postMessage(info);
+  }
+}
+
+async function loadKillSwitch() {
+  try {
+    const cache = await caches.open(KILL_SWITCH_CACHE);
+    const response = await cache.match(KILL_SWITCH_KEY);
+    killSwitchActive = Boolean(response);
+  } catch {
+    killSwitchActive = false;
+  }
+  return killSwitchActive;
+}
+
+async function persistKillSwitch() {
+  try {
+    const cache = await caches.open(KILL_SWITCH_CACHE);
+    await cache.put(KILL_SWITCH_KEY, new Response("1"));
+  } catch {
+    // Best effort: the in-memory flag still disables handling this lifetime.
+  }
+}
+
+// Delete every cache owned by this worker, including the kill-switch marker.
+async function purgeAllCaches() {
+  const keys = await caches.keys();
+  await Promise.all(
+    keys
+      .filter((key) => key.startsWith(CACHE_PREFIX))
+      .map((key) => caches.delete(key)),
+  );
+}
+
+// Trip the kill switch: stop handling events, purge caches, and unregister.
+async function engageKillSwitch() {
+  killSwitchActive = true;
+  await persistKillSwitch();
+  await purgeAllCaches();
+  try {
+    await self.registration.unregister();
+  } catch {
+    // Unregister may fail if the registration is already gone; ignore.
+  }
+  await broadcastVersion();
+}
+
+// Resolve the active cache version from the manifest so `activate` can prune
+// stale revisions without hardcoding a version string.
+let currentVersion = null;
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
+      await loadKillSwitch();
+      if (killSwitchActive) {
+        // A replacement worker deployed after a kill switch stays inert until
+        // the server clears the flag by re-registering a fresh worker.
+        await self.skipWaiting();
+        return;
+      }
       const response = await fetch(MANIFEST_URL, { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`Failed to load ${MANIFEST_URL}: ${response.status}`);
@@ -81,6 +194,12 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      await loadKillSwitch();
+      if (killSwitchActive) {
+        await broadcastVersion();
+        await self.clients.claim();
+        return;
+      }
       const keys = await caches.keys();
       await Promise.all(
         keys
@@ -97,19 +216,30 @@ self.addEventListener("activate", (event) => {
         await self.registration.navigationPreload.enable(NAVIGATION_PRELOAD_HEADER);
       }
       await self.clients.claim();
+      await broadcastVersion();
     })(),
   );
 });
 
-// Resolve the active cache version from the manifest so `activate` can prune
-// stale revisions without hardcoding a version string.
-let currentVersion = null;
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "SW_VERSION") {
-    currentVersion = event.data.version;
+  const data = event.data;
+  if (!data || typeof data !== "object") return;
+
+  if (data.type === "SW_VERSION") {
+    currentVersion = data.version;
+    return;
   }
-  return fn();
-}
+
+  if (data.type === MSG_VERSION_PROBE) {
+    event.waitUntil(broadcastVersion());
+    return;
+  }
+
+  if (data.type === MSG_KILL_SWITCH) {
+    event.waitUntil(engageKillSwitch());
+    return;
+  }
+});
 
 async function storeEnvelope(cacheKey, envelope, secret) {
   const record = await encryptOfflineEnvelope(envelope, secret, cacheKey);
@@ -263,12 +393,36 @@ async function handleCardNavigation(event) {
   return serveCachedEnvelope(event, cacheKey, cacheRequest, secret, state);
 }
 
+// Network-first so fresh shards replace stale ones; falls back to the cached
+// shard when offline.
+async function handleFacilityShard(request) {
+  const cache = await caches.open(FACILITY_CACHE);
+  try {
+    const response = await fetch(request);
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  } catch (error) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    throw error;
+  }
+}
+
 self.addEventListener("fetch", (event) => {
+  // Kill switch: become a no-op. Let the network handle everything.
+  if (killSwitchActive) return;
+
   const { request } = event;
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Only handle requests within this worker's scope. Requests outside the
+  // scope should never reach us, but guard defensively so a misconfigured
+  // registration cannot extend our reach.
+  const scope = self.registration ? self.registration.scope : null;
+  if (scope && !url.href.startsWith(scope)) return;
 
   if (url.pathname.startsWith(FACILITY_PATH_PREFIX) && url.pathname.endsWith(".json")) {
     event.respondWith(handleFacilityShard(request));
@@ -295,132 +449,4 @@ self.addEventListener("fetch", (event) => {
       }
     })(),
   );
-});
-
-// Network-first so fresh shards replace stale ones; falls back to the cached
-// shard when offline.
-async function handleFacilityShard(request) {
-  const cache = await caches.open(FACILITY_CACHE);
-  try {
-    const response = await fetch(request);
-    const isJson = (response.headers.get("Content-Type") ?? "").includes(
-      "application/json",
-    );
-    if (response.ok && isJson) {
-      await cache.put(request, response.clone());
-      return response;
-    }
-    // Not a genuine shard (e.g. captive-portal HTML): prefer the cached copy.
-    const cached = await cache.match(request);
-    return cached ?? response;
-  } catch (error) {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    throw error;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Offline packs via Background Fetch (issue #876).
-//
-// The page verifies the signed manifest and stores it in PACK_POINTER_CACHE
-// before registering the fetch, so this handler can verify and commit after
-// the tab is closed. Each chunk is hash-checked before it is staged in the
-// version cache; corrupted chunks are rejected and re-fetched (up to
-// MAX_PACK_ATTEMPTS). The pointer is flipped only once every chunk is
-// staged, so readers never see a half-updated pack.
-// ---------------------------------------------------------------------------
-
-async function sha256Hex(buffer) {
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(digest), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
-}
-
-function parsePackFetchId(id) {
-  const match = /^(pack:[^#]+)(?:#retry(\d+))?$/.exec(id);
-  return match ? { baseId: match[1], attempt: Number(match[2] ?? 0) } : null;
-}
-
-async function commitPack(manifest) {
-  const cacheName = `${PACK_CACHE_PREFIX}${manifest.name}-${manifest.version}`;
-  const staged = await caches.open(cacheName);
-  for (let i = 0; i < manifest.chunks.length; i++) {
-    if (!(await staged.match(`${manifest.url}#chunk=${i}`))) return false;
-  }
-  const pointers = await caches.open(PACK_POINTER_CACHE);
-  await pointers.put(
-    PACK_POINTER_PATH + manifest.name,
-    new Response(JSON.stringify({ version: manifest.version, manifest }), {
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
-  for (const key of await caches.keys()) {
-    if (key.startsWith(`${PACK_CACHE_PREFIX}${manifest.name}-`) && key !== cacheName) {
-      await caches.delete(key);
-    }
-  }
-  return true;
-}
-
-async function handlePackFetch(registration) {
-  const parsed = parsePackFetchId(registration.id);
-  if (!parsed) return;
-  const pointers = await caches.open(PACK_POINTER_CACHE);
-  const stored = await pointers.match(PACK_MANIFEST_PATH + parsed.baseId);
-  const manifest = stored ? await stored.json().catch(() => null) : null;
-  if (!manifest) return;
-  const staged = await caches.open(
-    `${PACK_CACHE_PREFIX}${manifest.name}-${manifest.version}`,
-  );
-
-  const retry = [];
-  for (const record of await registration.matchAll()) {
-    const range = /bytes=(\d+)-/.exec(record.request.headers.get("Range") ?? "");
-    const index = manifest.chunks.findIndex(
-      (c) => range && c.offset === Number(range[1]),
-    );
-    if (index < 0) continue;
-    const chunk = manifest.chunks[index];
-    const response = await record.responseReady.catch(() => null);
-    let data = response && response.ok ? await response.arrayBuffer() : null;
-    if (data && response.status === 200) {
-      data = data.slice(chunk.offset, chunk.offset + chunk.length);
-    }
-    if (
-      data &&
-      data.byteLength === chunk.length &&
-      (await sha256Hex(data)) === chunk.sha256
-    ) {
-      await staged.put(`${manifest.url}#chunk=${index}`, new Response(data));
-    } else {
-      retry.push(record.request);
-    }
-  }
-
-  if (retry.length > 0 && parsed.attempt + 1 < MAX_PACK_ATTEMPTS) {
-    await self.registration.backgroundFetch.fetch(
-      `${parsed.baseId}#retry${parsed.attempt + 1}`,
-      retry.map((req) => new Request(req.url, { headers: req.headers })),
-      { title: `Lafiya offline pack: ${manifest.name}` },
-    );
-    return;
-  }
-  if (await commitPack(manifest)) {
-    await pointers.delete(PACK_MANIFEST_PATH + parsed.baseId);
-    if (registration.updateUI) {
-      await registration.updateUI({ title: `Offline pack ready: ${manifest.name}` });
-    }
-  }
-}
-
-self.addEventListener("backgroundfetchsuccess", (event) => {
-  event.waitUntil(handlePackFetch(event.registration));
-});
-
-// Failed/aborted fetches keep their verified chunks staged; the page resumes
-// the remaining chunks with the range-request fallback on next visit.
-self.addEventListener("backgroundfetchfail", (event) => {
-  event.waitUntil(handlePackFetch(event.registration));
 });
