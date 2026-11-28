@@ -1,14 +1,27 @@
+"use client";
+
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 
+import {
+  DEFAULT_CARD_ROLE,
+  sectionOrderForRole,
+  type CardRole,
+  type CardSection,
+} from "@/lib/clinical/card-role-layout";
 import { formatDateTime, formatRelativeTime } from "@/lib/format/datetime";
 import { formatPhoneDisplay, phoneHref } from "@/lib/format/phone";
 import {
   CROSS_REACTIVITY_DISCLAIMER,
   crossReactivityNotes,
 } from "@/lib/clinical/allergy-cross-reactivity";
+import {
+  DRUG_INTERACTIONS_DISCLAIMER,
+  DRUG_INTERACTIONS_VERSION,
+  drugInteractionWarnings,
+} from "@/lib/clinical/drug-interactions";
 import { OfflineEnvelopeSource } from "@/lib/emergency/offline-source";
 import type { EmergencyCardRow } from "@/lib/supabase/types";
 
@@ -17,6 +30,7 @@ import { FacilityDirectory } from "@/components/facility-directory";
 import { NotifyContactsForm } from "../c/[token]/notify-contacts-form";
 import { VerifiedBadge, type VerificationStatus } from "./verified-badge";
 import { ReadAloud } from "./read-aloud";
+import { RoleSelector } from "./role-selector";
 
 function formatList(values: string[] | null, pinRequired = false): string {
   if (values === null) {
@@ -163,6 +177,15 @@ export function EmergencyCardContent({
   const medications = formatMedications(
     (card.medications as unknown[] | null) ?? null,
   );
+
+  // Issue #917: interaction warnings are computed server-side from the
+  // already-disclosed medication list only. A withheld or PIN-gated list is
+  // null here, so nothing is inferred from fields the patient kept private.
+  const interactionWarnings =
+    card.disclosure_states?.medications === "disclosed" &&
+    Array.isArray(card.medications)
+      ? drugInteractionWarnings(card.medications)
+      : [];
 
   return (
     <>

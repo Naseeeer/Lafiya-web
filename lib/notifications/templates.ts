@@ -59,7 +59,7 @@ function assertNoPhi(vars: Record<string, string>): void {
 // ─── Template definitions ───────────────────────────────────────────────────
 
 type LocaleMap = Partial<Record<SupportedLocale, RenderedMessage>>;
-type TemplateMap = Record<string, LocaleMap>;
+export type TemplateMap = Record<string, LocaleMap>;
 
 /**
  * Notification templates keyed by template ID then locale.
@@ -89,6 +89,10 @@ const TEMPLATES: TemplateMap = {
       subject: "Ìwọlé tuntun sí àkántì Lafiya rẹ",
       body: "A ṣàwárí ìwọlé tuntun lórí {device_type} ní {timestamp_utc} UTC. Tí ó kò bá jẹ́ ìwọ, jọ̀wọ́ dáàbò bo àkántì rẹ lẹ́sẹ̀kẹsẹ̀.",
     },
+    pcm: {
+      subject: "New sign-in to your Lafiya account",
+      body: "We see one new sign-in from {device_type} at {timestamp_utc} UTC. If na not you, abeg protect your account sharp sharp.",
+    },
   },
 
   /**
@@ -108,6 +112,9 @@ const TEMPLATES: TemplateMap = {
     },
     yo: {
       body: "Káàdì pàjáwìrì Lafiya kan ni wọ́n wọlé rẹ ni {access_time_utc} UTC. A kò firanṣẹ data ìlera kankan sí wa.",
+    },
+    pcm: {
+      body: "Somebody open one Lafiya emergency card at {access_time_utc} UTC. We no send any medical data to us.",
     },
   },
 
@@ -158,26 +165,21 @@ const TEMPLATES: TemplateMap = {
   },
 
   /**
-   * Sent to a partner owner the first time their integration calls a
-   * deprecated API endpoint or field (issue #938).
-   * Variables: {feature}, {sunset_date}
+   * Sent to a patient after a CHW visit is verified (issue #915).
+   * Variables: {chw_ref} (opaque CHW reference, never a name).
    */
-  "partner.deprecated_feature_used": {
+  "chw.visit_feedback_request": {
     en: {
-      subject: "Your integration uses a deprecated Lafiya API feature",
-      body: "Your integration called the deprecated API feature {feature}. It will be removed on {sunset_date}. Please migrate before that date.",
+      body: "Lafiya: did a community health worker visit you today? Reply YES or NO. Reply STOP to opt out.",
     },
     ha: {
-      subject: "Haɗin ku yana amfani da fasalin Lafiya da aka soke",
-      body: "Haɗin ku ya yi amfani da fasalin API na Lafiya da aka soke {feature}. Za a cire shi a {sunset_date}. Don Allah ku sauya kafin wannan ranar.",
+      body: "Lafiya: ma'aikacin lafiya na al'umma ya ziyarce ka yau? Amsa EH ko A'A. Amsa STOP don fita.",
     },
     ig: {
-      subject: "Njikọ gị na-eji atụmatụ Lafiya akwụsịla",
-      body: "Njikọ gị kpọrọ atụmatụ API Lafiya akwụsịla {feature}. A ga-ewepụ ya na {sunset_date}. Biko gbanwee tupu ụbọchị ahụ.",
+      body: "Lafiya: onye ọrụ ahụike obodo bịara gị taa? Zaa EE ma ọ bụ MBÀ. Zaa STOP iji pụọ.",
     },
     yo: {
-      subject: "Ìsopọ̀ rẹ ń lo ẹ̀yà Lafiya tí a ti dáwọ́ dúró",
-      body: "Ìsopọ̀ rẹ pe ẹ̀yà API Lafiya tí a ti dáwọ́ dúró {feature}. A ó yọ ọ́ kúrò ní {sunset_date}. Jọ̀wọ́ yí padà kí ọjọ́ náà tó dé.",
+      body: "Lafiya: oṣiṣẹ ìlera àdúgbò ṣèbẹ̀wò sí ọ lónìí? Dáhùn BẸ́Ẹ̀NI tàbí RÁRÁ. Dáhùn STOP láti jáde.",
     },
   },
 };
@@ -186,6 +188,45 @@ export type TemplateId = keyof typeof TEMPLATES;
 
 /** All registered template IDs (used by startup routing validation, #805). */
 export const TEMPLATE_IDS = Object.keys(TEMPLATES) as TemplateId[];
+
+/** All locales the registry is expected to cover (issue #955). */
+export const SUPPORTED_LOCALES: readonly SupportedLocale[] = ["en", "ha", "ig", "yo"];
+
+/**
+ * Raw (uninterpolated) template definitions, keyed by template ID then locale.
+ * Read-only view used by the golden snapshot / segment-budget tests (#955).
+ */
+export function getTemplateDefinitions(): Readonly<TemplateMap> {
+  return TEMPLATES;
+}
+
+/**
+ * Variable names referenced by a template string (`{variable}` placeholders).
+ */
+export function templateVariables(message: RenderedMessage): string[] {
+  const keys = new Set<string>();
+  for (const text of [message.subject ?? "", message.body]) {
+    for (const match of text.matchAll(/\{(\w+)\}/g)) keys.add(match[1]);
+  }
+  return [...keys].sort();
+}
+
+/**
+ * Per-template SMS segment budgets (issue #955).
+ *
+ * A segment is one billable SMS part: 160 GSM-7 characters, or 70 UCS-2
+ * characters when the message needs Unicode (Hausa/Igbo/Yoruba diacritics).
+ * Multi-part messages lose 7 (GSM-7) / 3 (UCS-2) characters per segment to the
+ * concatenation header. Budgets are enforced by
+ * `lib/notifications/templates.golden.test.ts`; raising one is a deliberate,
+ * reviewed decision.
+ */
+export const SMS_SEGMENT_BUDGETS: Record<TemplateId, number> = {
+  "security.new_signin": 2,
+  "emergency.card_accessed": 2,
+  "chw.verification_complete": 2,
+  "chw.reattestation_requested": 2,
+};
 
 // ─── Renderer ───────────────────────────────────────────────────────────────
 

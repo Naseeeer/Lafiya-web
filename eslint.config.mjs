@@ -2,6 +2,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 import noWildcardPhiSelect from "./eslint-rules/no-wildcard-phi-select.js";
+import noHardcodedJurisdiction from "./eslint-rules/no-hardcoded-jurisdiction.js";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -51,6 +52,34 @@ const eslintConfig = defineConfig([
         "error",
         {
           phiTables: ["profiles", "record_revisions", "profile_secrets"],
+        },
+      ],
+    },
+  },
+  {
+    // Issue #880: keep @stellar/stellar-sdk out of the public card hot path.
+    // The card route uses the minimal codec in lib/stellar/soroban-lite.ts;
+    // the full SDK stays available to CHW / payout / SEP-10 code.
+    files: [
+      "app/(public)/card/**/*.{ts,tsx}",
+      "lib/stellar/attestation.ts",
+      "lib/stellar/soroban-lite.ts",
+      "lib/stellar/verification-indexer/trust-state.ts",
+      "lib/http/dispatchers.ts",
+    ],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@stellar/stellar-sdk",
+              message:
+                "The card route must not import the Stellar SDK (Issue #880). Use lib/stellar/soroban-lite.ts.",
+            },
+          ],
+          patterns: [{ group: ["@stellar/stellar-sdk/*"], message: "See Issue #880." }],
         },
       ],
     },

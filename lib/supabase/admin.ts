@@ -17,6 +17,8 @@ export const ADMIN_PURPOSES = [
   "partner-api",
   "partner-webhooks",
   "job-lease",
+  "wallet-passes",
+  "synthetic-monitor",
 ] as const;
 
 export type AdminPurpose = (typeof ADMIN_PURPOSES)[number];

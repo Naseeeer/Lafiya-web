@@ -30,10 +30,18 @@
 
 import "server-only";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createWorkloadClient } from "@/lib/supabase/workload";
 import { logError, logInfo, logWarn } from "@/lib/logging/logger";
 import { invalidateAttestationCache } from "@/lib/stellar/attestation-cache-invalidation";
 import { parseInboxPayload } from "@/lib/notifications/inbox";
+import {
+  assertDocumentedEvent,
+  isDocumentedEvent,
+} from "@/lib/events/registry";
+import {
+  isWorkflowOwnedStep,
+  signalWorkflowStep,
+} from "@/lib/chw-protocol/workflow";
 import type { OutboxHandler, OutboxHandlerRegistry, OutboxRow } from "./types";
 import { upcastPayload, validateOutboxPayload } from "./types";
 
@@ -87,7 +95,7 @@ const handleUserNotification: OutboxHandler = async (row) => {
     });
     return;
   }
-  const admin = createAdminClient();
+  const admin = createWorkloadClient("outbox_dispatcher");
   const { error } = await (admin as any).rpc("record_user_notification", {
     p_card_public_id: payload.card_public_id,
     p_type: payload.type,
@@ -101,6 +109,17 @@ export const HANDLERS: OutboxHandlerRegistry = new Map<string, OutboxHandler>([
   ["record_revision:record_saved", handleRecordSaved],
   ["user_notification:security_event", handleUserNotification],
 ]);
+
+/**
+ * Event types emitted by the built-in handlers above.  Each must be present
+ * in the event registry (and therefore in the generated AsyncAPI catalog,
+ * issue #971) with producer/consumer metadata.  Kept in sync with HANDLERS
+ * by the `outbox:handlers-documented` CI check.
+ */
+export const BUILT_IN_EVENT_TYPES = [
+  "record_revision:record_saved",
+  "user_notification:security_event",
+] as const;
 
 // ─── Dispatcher core ────────────────────────────────────────────────────────
 
@@ -119,7 +138,7 @@ export async function runDispatchCycle(
   handlers: OutboxHandlerRegistry = HANDLERS,
   batchSize = 50,
 ): Promise<number> {
-  const admin = createAdminClient();
+  const admin = createWorkloadClient("outbox_dispatcher");
 
   // Claim a batch atomically (FOR UPDATE SKIP LOCKED via the SQL helper).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -130,19 +149,56 @@ export async function runDispatchCycle(
 
   if (claimError) {
     logError("outbox: failed to claim batch", claimError);
-    return 0;
+    stats.durationMs = Date.now() - startedAt;
+    return stats;
   }
 
   if (!rows || rows.length === 0) {
-    return 0;
+    stats.durationMs = Date.now() - startedAt;
+    return stats;
   }
 
   logInfo("outbox: dispatching batch", { count: rows.length });
 
-  let dispatched = 0;
+  stats.claimed = rows.length;
 
   for (const row of rows as OutboxRow[]) {
     const key = `${row.aggregate}:${row.event_type}`;
+
+    // Issue #971: reject event types that are not in the documented catalog.
+    // An undocumented type is a programming error, not a transient failure —
+    // acknowledge it so it does not clog the queue, but log loudly.
+    if (!isDocumentedEvent(key)) {
+      logError(
+        "outbox: undocumented event type — acknowledging (add it to the event registry)",
+        new Error(`undocumented event type: ${key}`),
+        { key, outbox_id: row.id },
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin as any).rpc("ack_outbox_row", { p_id: row.id });
+      continue;
+    }
+
+    // Issue #970: when a durable workflow owns this step, hand the event to
+    // the workflow engine instead of running the handler inline.  The
+    // workflow performs the (idempotent) activity and its own retries; the
+    // outbox row is acknowledged once the signal is accepted.
+    if (isWorkflowOwnedStep(key)) {
+      try {
+        await signalWorkflowStep(key, row);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).rpc("ack_outbox_row", { p_id: row.id });
+        dispatched++;
+      } catch (err) {
+        logError("outbox: workflow signal failed — row will be retried", err, {
+          key,
+          outbox_id: row.id,
+          attempts: row.attempts,
+        });
+      }
+      continue;
+    }
+
     const handler = handlers.get(key);
 
     if (!handler) {
@@ -153,7 +209,8 @@ export async function runDispatchCycle(
       // Acknowledge unknown event types so they don't clog the queue.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (admin as any).rpc("ack_outbox_row", { p_id: row.id });
-      dispatched++;
+      stats.dispatched++;
+      stats.latenciesMs.push(latencyMs(row));
       continue;
     }
 
@@ -161,8 +218,10 @@ export async function runDispatchCycle(
       await handler(row);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (admin as any).rpc("ack_outbox_row", { p_id: row.id });
-      dispatched++;
+      stats.dispatched++;
+      stats.latenciesMs.push(latencyMs(row));
     } catch (err) {
+      stats.failed++;
       // Leave dispatched_at = null; attempts was already incremented by
       // claim_outbox_batch, providing natural back-pressure visibility.
       logError("outbox: handler threw — row will be retried", err, {
@@ -190,6 +249,9 @@ export function assertValidOutboxPayload(
   payload: Record<string, unknown>,
 ): void {
   const key = `${aggregate}:${event_type}`;
+  // Issue #971: every emitted event type must be documented in the registry
+  // (and thus the AsyncAPI catalog) before it can be written to the outbox.
+  assertDocumentedEvent(key);
   const result = validateOutboxPayload(key, payload);
   if (!result.ok) {
     throw new Error(
@@ -211,11 +273,11 @@ export interface OutboxLag {
  * Returns the lag of the outbox queue so a monitoring probe can alert when
  * rows are not being consumed within an acceptable window.
  *
- * Uses the service-role client because `outbox` is not accessible to the
- * authenticated role (internal infrastructure table).
+ * Uses the `outbox_dispatcher` workload role because `outbox` is not
+ * accessible to the authenticated role (internal infrastructure table).
  */
 export async function getOutboxLag(): Promise<OutboxLag> {
-  const admin = createAdminClient();
+  const admin = createWorkloadClient("outbox_dispatcher");
 
   const { data, error } = await admin
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
