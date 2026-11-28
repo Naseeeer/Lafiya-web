@@ -262,6 +262,10 @@ const rawServerEnvSchema = z.object({
   DIRECT_URL: optionalPoolerUrl,
   STELLAR_NETWORK_PASSPHRASE: z.string().min(1),
   SOROBAN_RPC_URL: z.url(),
+  // Issue #901: opt-in switch for the nightly Futurenet compatibility suite.
+  // When set, the Soroban-facing integration tests run against the next
+  // protocol instead of the default testnet/mock path.
+  SOROBAN_COMPAT_NETWORK: z.enum(["testnet", "futurenet"]).optional(),
   LAFIYA_DEPLOYMENT_ENV: optionalString,
   ATTESTATION_MODE: attestationModeSchema.optional(),
   ATTESTATION_CONTRACT_ID: optionalString,
@@ -404,6 +408,8 @@ export type RuntimeConfig = {
     approvedWasmHashes: string[];
   };
   payoutIndexer: { enabled: boolean };
+  /** Issue #901: nightly Futurenet compatibility switch (undefined = off). */
+  sorobanCompat: { network?: "testnet" | "futurenet" };
   sentry: { enabled: boolean };
   /**
    * Issue #969: the jurisdiction rules for this deployment/organization.
@@ -554,6 +560,7 @@ export function getRuntimeConfig(
     DIRECT_URL: env.DIRECT_URL,
     STELLAR_NETWORK_PASSPHRASE: env.STELLAR_NETWORK_PASSPHRASE,
     SOROBAN_RPC_URL: env.SOROBAN_RPC_URL,
+    SOROBAN_COMPAT_NETWORK: env.SOROBAN_COMPAT_NETWORK,
     LAFIYA_DEPLOYMENT_ENV: env.LAFIYA_DEPLOYMENT_ENV,
     ATTESTATION_MODE: env.ATTESTATION_MODE,
     ATTESTATION_CONTRACT_ID: env.ATTESTATION_CONTRACT_ID,
@@ -764,6 +771,7 @@ export function getRuntimeConfig(
       approvedWasmHashes,
     },
     payoutIndexer: { enabled: config.PAYOUT_INDEXER_ENABLED },
+  sorobanCompat: { network: config.SOROBAN_COMPAT_NETWORK },
     sentry: { enabled: config.SENTRY_ENABLED },
     countryPack,
     database: {
