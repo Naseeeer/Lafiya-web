@@ -295,6 +295,10 @@ const rawServerEnvSchema = z.object({
   SENTRY_ENABLED: booleanStringSchema.default(false),
   NEXT_PUBLIC_SENTRY_DSN: optionalUrl,
   SENTRY_DSN: optionalUrl,
+  // Issue #942: continuous CPU/heap profiling for server functions. Profiles
+  // are PHI-free (frames + route/release tags only) and sampled at a low rate
+  // to stay under the 2% CPU overhead budget.
+  SENTRY_PROFILES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
   LAFIYA_BUILD_REVISION: optionalString,
   // Issue #963: CalVer release identifier (e.g. "2026.11.25" or
   // "2026.11.25-rc.1") of the tagged release this build was cut from.
@@ -586,6 +590,7 @@ export function getRuntimeConfig(
     SENTRY_ENABLED: env.SENTRY_ENABLED,
     NEXT_PUBLIC_SENTRY_DSN: env.NEXT_PUBLIC_SENTRY_DSN,
     SENTRY_DSN: env.SENTRY_DSN,
+    SENTRY_PROFILES_SAMPLE_RATE: env.SENTRY_PROFILES_SAMPLE_RATE,
     LAFIYA_BUILD_REVISION: env.LAFIYA_BUILD_REVISION,
     LAFIYA_RELEASE_VERSION: env.LAFIYA_RELEASE_VERSION,
     LAFIYA_SCHEMA_COMPATIBILITY: env.LAFIYA_SCHEMA_COMPATIBILITY,
@@ -757,6 +762,12 @@ export function getRuntimeConfig(
     requireConfigured(
       !config.NEXT_PUBLIC_SENTRY_DSN && !config.SENTRY_DSN,
       "SENTRY_DISABLED_WITH_CONFIGURATION",
+    );
+    // Profiling rides on Sentry's tracing pipeline; a non-zero rate without
+    // Sentry enabled would silently profile nothing.
+    requireConfigured(
+      config.SENTRY_PROFILES_SAMPLE_RATE === 0,
+      "SENTRY_PROFILES_WITHOUT_SENTRY",
     );
   }
 
