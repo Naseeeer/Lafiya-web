@@ -158,25 +158,21 @@ const TEMPLATES: TemplateMap = {
   },
 
   /**
-   * Sent to a CHW when a certification is about to expire.
-   * Variables: {module_title}, {expires_on_utc}
+   * Sent to a patient after a CHW visit is verified (issue #915).
+   * Variables: {chw_ref} (opaque CHW reference, never a name).
    */
-  "chw.certification_expiring": {
+  "chw.visit_feedback_request": {
     en: {
-      subject: "Your CHW certification is expiring",
-      body: "Your certification for {module_title} expires on {expires_on_utc} UTC. Renew it to keep attesting those record fields.",
+      body: "Lafiya: did a community health worker visit you today? Reply YES or NO. Reply STOP to opt out.",
     },
     ha: {
-      subject: "Takardar shaidar CHW naka za ta ƙare",
-      body: "Takardar shaidar ka don {module_title} za ta ƙare a {expires_on_utc} UTC. Sabunta ta don ci gaba da tabbatar da waɗannan filayen.",
+      body: "Lafiya: ma'aikacin lafiya na al'umma ya ziyarce ka yau? Amsa EH ko A'A. Amsa STOP don fita.",
     },
     ig: {
-      subject: "Asambodo CHW gị na-agwụ",
-      body: "Asambodo gị maka {module_title} ga-agwụ na {expires_on_utc} UTC. Megharịa ya ka ị nọgide na-agba akaebe maka ubi ndị ahụ.",
+      body: "Lafiya: onye ọrụ ahụike obodo bịara gị taa? Zaa EE ma ọ bụ MBÀ. Zaa STOP iji pụọ.",
     },
     yo: {
-      subject: "Ìwé-ẹ̀rí CHW rẹ ń parí",
-      body: "Ìwé-ẹ̀rí rẹ fún {module_title} yóò parí ní {expires_on_utc} UTC. Sọ dọ́tun rẹ̀ kí o lè máa jẹ́rìí àwọn pápá yẹn.",
+      body: "Lafiya: oṣiṣẹ ìlera àdúgbò ṣèbẹ̀wò sí ọ lónìí? Dáhùn BẸ́Ẹ̀NI tàbí RÁRÁ. Dáhùn STOP láti jáde.",
     },
   },
 };
