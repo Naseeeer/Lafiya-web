@@ -296,6 +296,56 @@ export function cardBlocks(
   return blocks;
 }
 
+/**
+ * Issue #932: large-print reading order. Same fields, same order, but every
+ * run is at least 18 pt and the QR code is dropped — a large-print card is
+ * read by a person, and the URL is printed in full instead.
+ */
+export function largePrintBlocks(card: PrintableCard): Block[] {
+  const blocks: Block[] = [
+    { tag: "H1", text: "Emergency Card", size: 30 },
+    {
+      tag: "P",
+      text: `${card.name ?? "Name withheld"}${card.age !== null ? ` - ${card.age} years old` : ""}`,
+      size: 20,
+      gray: true,
+    },
+  ];
+  const field = (label: string, value: string) =>
+    blocks.push(
+      { tag: "H2", text: label, size: 18, gray: true },
+      { tag: "P", text: value, size: 22 },
+    );
+  field("Allergies", list(card.allergies));
+  field("Current medications", list(card.medications));
+  field("Chronic conditions / implants", list(card.chronic_conditions));
+  field("Blood group", card.blood_group ?? "Withheld");
+  field("Genotype", card.genotype ?? "Withheld");
+  if (card.emergency_contacts && card.emergency_contacts.length > 0) {
+    blocks.push({
+      tag: "H2",
+      text: "Emergency contacts",
+      size: 18,
+      gray: true,
+    });
+    for (const c of card.emergency_contacts) {
+      blocks.push({
+        tag: "P",
+        text: `${c.name} (${c.relationship}): ${c.phone}`,
+        size: 20,
+      });
+    }
+  }
+  field("Language spoken", card.language ?? "Not specified");
+  blocks.push({
+    tag: "P",
+    text: "Not a medical device. Not a substitute for professional medical judgment.",
+    size: 18,
+    gray: true,
+  });
+  return blocks;
+}
+
 function pinBlocks(cardPin: string): Block[] {
   return [
     { tag: "H2", text: "Card PIN (back of card)", size: 10, gray: true },
@@ -417,6 +467,38 @@ function layoutPage(blocks: Block[], m: TtfMetrics): LaidOutPage {
     `/Artifact BMC 0.85 G 0.5 w ${MARGIN} ${MARGIN - 16} m ${PAGE_W - MARGIN} ${MARGIN - 16} l S EMC`,
   );
   return { content: ops.join("\n"), elems };
+}
+
+/**
+ * Issue #932: paginates blocks across as many pages as the content needs.
+ * A block is never split, so each structure element stays on one page.
+ */
+function layoutPages(blocks: Block[], m: TtfMetrics): LaidOutPage[] {
+  const pages: LaidOutPage[] = [];
+  let current: Block[] = [];
+  let used = 0;
+  const budget = PAGE_H - 2 * MARGIN;
+  for (const b of blocks) {
+    const height =
+      b.tag === "Figure"
+        ? QR_SIZE + 16
+        : wrap(toWinAnsi(b.text), b.size, PAGE_W - 2 * MARGIN, m.widths)
+            .length *
+            b.size *
+            1.3 +
+          (b.tag === "H2" ? 6 : 0);
+    if (current.length > 0 && used + height > budget) {
+      pages.push(layoutPage(current, m));
+      current = [];
+      used = 0;
+    }
+    current.push(b);
+    used += height;
+  }
+  if (current.length > 0 || pages.length === 0) {
+    pages.push(layoutPage(current, m));
+  }
+  return pages;
 }
 
 function xmp(title: string): string {
@@ -550,10 +632,10 @@ export function buildCardPdf(
     metadataId,
     stream(
       "/Type /Metadata /Subtype /XML",
-      Buffer.from(xmp(CARD_PDF_TITLE), "utf8"),
+      Buffer.from(xmp(title), "utf8"),
     ),
   );
-  set(infoId, `<< /Title ${pdfString(CARD_PDF_TITLE)} /Producer (Lafiya) >>`);
+  set(infoId, `<< /Title ${pdfString(title)} /Producer (Lafiya) >>`);
 
   const chunks: Buffer[] = [
     Buffer.from("%PDF-1.7\n%\xE2\xE3\xCF\xD3\n", "latin1"),
