@@ -2,6 +2,8 @@ import { z } from "zod";
 import { isValidPhoneNumber } from "libphonenumber-js";
 import { getActiveCountryPack } from "@/lib/country-packs";
 
+import { anaphylaxisPlanSchema } from "@/lib/clinical/anaphylaxis-plan";
+
 export { formatZodError } from "./zod";
 
 export const BLOOD_GROUPS = [
@@ -77,6 +79,10 @@ export const allergySchema = z.object({
   reaction: z.enum(ALLERGY_REACTIONS).nullable().default(null),
   severity: z.enum(ALLERGY_SEVERITIES).nullable().default(null),
   criticality: z.enum(ALLERGY_CRITICALITIES).default("unable-to-assess"),
+  // Issue #923: optional anaphylaxis action plan attached to this allergy.
+  // Only meaningful for high-criticality entries; validated by
+  // anaphylaxisPlanSchema (weight-based dose bands included).
+  anaphylaxisPlan: anaphylaxisPlanSchema.nullable().default(null),
 });
 
 export type Allergy = z.infer<typeof allergySchema>;
