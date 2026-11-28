@@ -59,7 +59,7 @@ function assertNoPhi(vars: Record<string, string>): void {
 // ─── Template definitions ───────────────────────────────────────────────────
 
 type LocaleMap = Partial<Record<SupportedLocale, RenderedMessage>>;
-type TemplateMap = Record<string, LocaleMap>;
+export type TemplateMap = Record<string, LocaleMap>;
 
 /**
  * Notification templates keyed by template ID then locale.
@@ -89,6 +89,10 @@ const TEMPLATES: TemplateMap = {
       subject: "Ìwọlé tuntun sí àkántì Lafiya rẹ",
       body: "A ṣàwárí ìwọlé tuntun lórí {device_type} ní {timestamp_utc} UTC. Tí ó kò bá jẹ́ ìwọ, jọ̀wọ́ dáàbò bo àkántì rẹ lẹ́sẹ̀kẹsẹ̀.",
     },
+    pcm: {
+      subject: "New sign-in to your Lafiya account",
+      body: "We see one new sign-in from {device_type} at {timestamp_utc} UTC. If na not you, abeg protect your account sharp sharp.",
+    },
   },
 
   /**
@@ -108,6 +112,9 @@ const TEMPLATES: TemplateMap = {
     },
     yo: {
       body: "Káàdì pàjáwìrì Lafiya kan ni wọ́n wọlé rẹ ni {access_time_utc} UTC. A kò firanṣẹ data ìlera kankan sí wa.",
+    },
+    pcm: {
+      body: "Somebody open one Lafiya emergency card at {access_time_utc} UTC. We no send any medical data to us.",
     },
   },
 
@@ -156,12 +163,70 @@ const TEMPLATES: TemplateMap = {
       body: "A gba ìbéèrè lati fọwọ́ sí àkọsílẹ̀ Lafiya ní {requested_at_utc} UTC, ó sì ń dúró fún àgbeyẹwò.",
     },
   },
+
+  /**
+   * Sent to a patient after a CHW visit is verified (issue #915).
+   * Variables: {chw_ref} (opaque CHW reference, never a name).
+   */
+  "chw.visit_feedback_request": {
+    en: {
+      body: "Lafiya: did a community health worker visit you today? Reply YES or NO. Reply STOP to opt out.",
+    },
+    ha: {
+      body: "Lafiya: ma'aikacin lafiya na al'umma ya ziyarce ka yau? Amsa EH ko A'A. Amsa STOP don fita.",
+    },
+    ig: {
+      body: "Lafiya: onye ọrụ ahụike obodo bịara gị taa? Zaa EE ma ọ bụ MBÀ. Zaa STOP iji pụọ.",
+    },
+    yo: {
+      body: "Lafiya: oṣiṣẹ ìlera àdúgbò ṣèbẹ̀wò sí ọ lónìí? Dáhùn BẸ́Ẹ̀NI tàbí RÁRÁ. Dáhùn STOP láti jáde.",
+    },
+  },
 };
 
 export type TemplateId = keyof typeof TEMPLATES;
 
 /** All registered template IDs (used by startup routing validation, #805). */
 export const TEMPLATE_IDS = Object.keys(TEMPLATES) as TemplateId[];
+
+/** All locales the registry is expected to cover (issue #955). */
+export const SUPPORTED_LOCALES: readonly SupportedLocale[] = ["en", "ha", "ig", "yo"];
+
+/**
+ * Raw (uninterpolated) template definitions, keyed by template ID then locale.
+ * Read-only view used by the golden snapshot / segment-budget tests (#955).
+ */
+export function getTemplateDefinitions(): Readonly<TemplateMap> {
+  return TEMPLATES;
+}
+
+/**
+ * Variable names referenced by a template string (`{variable}` placeholders).
+ */
+export function templateVariables(message: RenderedMessage): string[] {
+  const keys = new Set<string>();
+  for (const text of [message.subject ?? "", message.body]) {
+    for (const match of text.matchAll(/\{(\w+)\}/g)) keys.add(match[1]);
+  }
+  return [...keys].sort();
+}
+
+/**
+ * Per-template SMS segment budgets (issue #955).
+ *
+ * A segment is one billable SMS part: 160 GSM-7 characters, or 70 UCS-2
+ * characters when the message needs Unicode (Hausa/Igbo/Yoruba diacritics).
+ * Multi-part messages lose 7 (GSM-7) / 3 (UCS-2) characters per segment to the
+ * concatenation header. Budgets are enforced by
+ * `lib/notifications/templates.golden.test.ts`; raising one is a deliberate,
+ * reviewed decision.
+ */
+export const SMS_SEGMENT_BUDGETS: Record<TemplateId, number> = {
+  "security.new_signin": 2,
+  "emergency.card_accessed": 2,
+  "chw.verification_complete": 2,
+  "chw.reattestation_requested": 2,
+};
 
 // ─── Renderer ───────────────────────────────────────────────────────────────
 

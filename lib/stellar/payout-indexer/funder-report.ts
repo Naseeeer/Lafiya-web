@@ -13,6 +13,8 @@
  * review notes.
  */
 
+import { formatStroops, parseStroops, sumStroops } from "./stroops";
+
 export const FUNDER_REPORT_SCHEMA_VERSION = 1;
 
 export interface RegionPayoutRow {
@@ -27,12 +29,24 @@ export interface RegionPayoutRow {
   transactionHashes: string[];
 }
 
+/** Per-pool usage/remaining balance, in stroops (issue #907). */
+export interface PoolReportRow {
+  poolId: string;
+  funderName: string;
+  fundedStroops: string;
+  spentStroops: string;
+  remainingStroops: string;
+  payoutsCount: number;
+}
+
 export interface FunderReport {
   schemaVersion: number;
   /** UTC period, e.g. "2026-09" for a calendar month. */
   period: string;
   generatedAt: string;
   rows: RegionPayoutRow[];
+  /** Present only when the caller supplies pool usage; sorted by poolId. */
+  pools?: PoolReportRow[];
 }
 
 export interface RawSettlementRecord {
@@ -58,6 +72,7 @@ export function buildFunderReport(
   period: string,
   records: RawSettlementRecord[],
   generatedAt: Date = new Date(),
+  poolUsage: PoolUsageRow[] = [],
 ): FunderReport {
   if (!/^\d{4}-\d{2}$/.test(period)) {
     throw new Error(`period must be a UTC "YYYY-MM" string, got: ${period}`);
@@ -81,7 +96,9 @@ export function buildFunderReport(
         region,
         verifiedRegistrations,
         payoutsCount: paid.length,
-        payoutsTotalUsdc: sumFixedDecimal(paid.map((r) => r.payoutAmountUsdc)),
+        payoutsTotalUsdc: formatStroops(
+          sumStroops(paid.map((r) => parseStroops(r.payoutAmountUsdc))),
+        ),
         transactionHashes,
       };
     });
@@ -91,22 +108,8 @@ export function buildFunderReport(
     period,
     generatedAt: generatedAt.toISOString(),
     rows,
+    ...(poolUsage.length > 0 ? { pools: buildPoolReportRows(poolUsage) } : {}),
   };
-}
-
-/** Sums decimal strings (7 dp) using integer arithmetic to avoid floating-point drift. */
-function sumFixedDecimal(amounts: string[]): string {
-  const DECIMALS = 7;
-  const scale = 10 ** DECIMALS;
-  let totalScaled = 0n;
-  for (const amount of amounts) {
-    const [whole, frac = ""] = amount.split(".");
-    const fracPadded = (frac + "0".repeat(DECIMALS)).slice(0, DECIMALS);
-    totalScaled += BigInt(whole) * BigInt(scale) + BigInt(fracPadded || "0");
-  }
-  const wholePart = totalScaled / BigInt(scale);
-  const fracPart = (totalScaled % BigInt(scale)).toString().padStart(DECIMALS, "0");
-  return `${wholePart}.${fracPart}`;
 }
 
 /** JSON serialization with stable key ordering (used for both output and the signed byte stream). */

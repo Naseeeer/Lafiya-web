@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -22,15 +24,24 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run lint
+      - name: Restore Turborepo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      - run: npm run turbo:lint
 
       - run: npm run schedules:check
+      - run: npm run alerts:check
 
       - run: npm run tokens:check
 
-      - run: npm run typecheck
+      - run: npm run turbo:typecheck
 
-      - run: npm test
+      - run: npm run turbo:test
 
       - name: Verify design token contrast across themes
         run: npm run tokens:check
@@ -93,7 +104,7 @@ jobs:
       - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3
       - run: supabase start
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- ${{ steps.impact.outputs.playwright_args }}
       - run: supabase stop
         if: always()
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
