@@ -7,6 +7,8 @@
  * on-device to sort the list; it is never sent over the network.
  */
 
+import { compareNames } from "@/lib/i18n/name-match-key";
+
 export type Facility = {
   id: string;
   name: string;
@@ -50,6 +52,14 @@ export function distanceKm(a: Coordinates, b: Coordinates): number {
 export type RankedFacility = Facility & { distanceKm: number | null };
 
 /**
+ * Issue #927: facility names carry diacritics ("Ọ̀ṣun", "Adébáyọ̀"); sort them
+ * with a locale-aware collator so marked and unmarked spellings interleave.
+ */
+function compareFacilityNames(a: Facility, b: Facility): number {
+  return compareNames(a.name, b.name);
+}
+
+/**
  * Sorts by straight-line distance when a location is available; otherwise
  * keeps the region list order (24h emergency facilities first, then name).
  */
@@ -62,19 +72,39 @@ export function rankFacilities(
       .sort(
         (a, b) =>
           Number(b.emergency24h) - Number(a.emergency24h) ||
-          a.name.localeCompare(b.name),
+          compareFacilityNames(a, b),
       )
       .map((f) => ({ ...f, distanceKm: null }));
   }
   return facilities
     .map((f) => ({ ...f, distanceKm: distanceKm(origin, f) }))
     .sort(
-      (a, b) => a.distanceKm - b.distanceKm || a.name.localeCompare(b.name),
+      (a, b) => a.distanceKm - b.distanceKm || compareFacilityNames(a, b),
     );
 }
 
 export function shardUrl(state: string): string {
   return `${FACILITY_SHARD_PATH}${encodeURIComponent(state)}.json`;
+}
+
+/**
+ * Issue #876: the "facilities" offline pack is a JSON object of shards keyed
+ * by state, downloaded ahead of time (see lib/offline/packs.ts).
+ */
+export const FACILITY_PACK_NAME = "facilities";
+
+async function loadShardFromPack(state: string): Promise<FacilityShard | null> {
+  try {
+    const bytes = await readActivePack(FACILITY_PACK_NAME);
+    if (!bytes) return null;
+    const shards = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+      string,
+      FacilityShard
+    >;
+    return shards[state] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function loadShard(
@@ -83,9 +113,9 @@ export async function loadShard(
 ): Promise<FacilityShard | null> {
   try {
     const response = await fetchImpl(shardUrl(state));
-    if (!response.ok) return null;
+    if (!response.ok) return loadShardFromPack(state);
     return (await response.json()) as FacilityShard;
   } catch {
-    return null;
+    return loadShardFromPack(state);
   }
 }
