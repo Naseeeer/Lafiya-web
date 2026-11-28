@@ -24,27 +24,24 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run lint
+      - name: Restore Turborepo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      - run: npm run turbo:lint
 
       - run: npm run schedules:check
+      - run: npm run alerts:check
 
       - run: npm run tokens:check
 
-      - run: npm run typecheck
+      - run: npm run turbo:typecheck
 
-      # Issue #953: pull requests run only affected tests; main and nightly
-      # always run the full suite.
-      - name: Test impact analysis
-        id: impact
-        run: >-
-          node scripts/test-impact.mjs
-          --base "origin/${{ github.base_ref || 'main' }}"
-          --head "${{ github.event.pull_request.head.sha || github.sha }}"
-          --event "${{ github.event_name }}"
-          --ref "${{ github.ref }}"
-          --out test-impact.json
-
-      - run: npm test -- ${{ steps.impact.outputs.vitest_args }}
+      - run: npm run turbo:test
 
       - name: Verify design token contrast across themes
         run: npm run tokens:check

@@ -6,7 +6,6 @@ import type {
   BloodGroup,
   EmergencyContact,
   Genotype,
-  ProfileRow,
 } from "@/lib/supabase/types";
 
 export const RECORD_SCHEMA_VERSION = 1 as const;
@@ -109,6 +108,29 @@ export function canonicalizeEmergencyRecord(data: EmergencyRecordData): string {
   });
 }
 
+/**
+ * Verifier-side canonicalization (issue #958). This is the implementation the
+ * attestation pipeline and CHW tooling run; the nightly differential fuzzer
+ * compares it against `@lafiya/protocol` and persists any divergence as a
+ * committed test vector. Keep it independent of the protocol package.
+ */
+export function canonicalizeEmergencyRecordVerifier(
+  data: EmergencyRecordData,
+): string {
+  const normalized = normalizeEmergencyRecord(data);
+  return JSON.stringify({
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    name: normalized.name,
+    bloodGroup: normalized.blood_group,
+    genotype: normalized.genotype,
+    allergies: normalized.allergies,
+    medications: normalized.medications,
+    chronicConditions: normalized.chronic_conditions,
+    emergencyContacts: normalized.emergency_contacts,
+    language: normalized.language,
+  });
+}
+
 export function computeRevisionCommitment(
   data: EmergencyRecordData,
   secretHex: string,
@@ -121,20 +143,14 @@ export function computeRevisionCommitment(
     .digest("hex");
 }
 
+/**
+ * @deprecated PHI columns must only be read inside `lib/phi/`. Obtain an
+ * `EmergencyRecordData` from the `lib/phi/` emergency-envelope projection and
+ * pass it to `normalizeEmergencyRecord`/`canonicalizeEmergencyRecord` instead.
+ * This helper is retained only for the `lib/phi/` projection implementation.
+ */
 export function profileToEmergencyRecord(
-  profile: Pick<
-    ProfileRow,
-    | "name"
-    | "date_of_birth"
-    | "photo_url"
-    | "language"
-    | "blood_group"
-    | "genotype"
-    | "allergies"
-    | "medications"
-    | "chronic_conditions"
-    | "emergency_contacts"
-  >,
+  profile: EmergencyRecordData,
 ): EmergencyRecordData {
   return normalizeEmergencyRecord(profile);
 }
