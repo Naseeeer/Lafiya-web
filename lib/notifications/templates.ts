@@ -89,6 +89,10 @@ const TEMPLATES: TemplateMap = {
       subject: "Ìwọlé tuntun sí àkántì Lafiya rẹ",
       body: "A ṣàwárí ìwọlé tuntun lórí {device_type} ní {timestamp_utc} UTC. Tí ó kò bá jẹ́ ìwọ, jọ̀wọ́ dáàbò bo àkántì rẹ lẹ́sẹ̀kẹsẹ̀.",
     },
+    pcm: {
+      subject: "New sign-in to your Lafiya account",
+      body: "We see one new sign-in from {device_type} at {timestamp_utc} UTC. If na not you, abeg protect your account sharp sharp.",
+    },
   },
 
   /**
@@ -108,6 +112,9 @@ const TEMPLATES: TemplateMap = {
     },
     yo: {
       body: "Káàdì pàjáwìrì Lafiya kan ni wọ́n wọlé rẹ ni {access_time_utc} UTC. A kò firanṣẹ data ìlera kankan sí wa.",
+    },
+    pcm: {
+      body: "Somebody open one Lafiya emergency card at {access_time_utc} UTC. We no send any medical data to us.",
     },
   },
 
@@ -154,6 +161,25 @@ const TEMPLATES: TemplateMap = {
     yo: {
       subject: "Gba ìbéèrè fọwọ́ sí",
       body: "A gba ìbéèrè lati fọwọ́ sí àkọsílẹ̀ Lafiya ní {requested_at_utc} UTC, ó sì ń dúró fún àgbeyẹwò.",
+    },
+  },
+
+  /**
+   * Sent to a patient after a CHW visit is verified (issue #915).
+   * Variables: {chw_ref} (opaque CHW reference, never a name).
+   */
+  "chw.visit_feedback_request": {
+    en: {
+      body: "Lafiya: did a community health worker visit you today? Reply YES or NO. Reply STOP to opt out.",
+    },
+    ha: {
+      body: "Lafiya: ma'aikacin lafiya na al'umma ya ziyarce ka yau? Amsa EH ko A'A. Amsa STOP don fita.",
+    },
+    ig: {
+      body: "Lafiya: onye ọrụ ahụike obodo bịara gị taa? Zaa EE ma ọ bụ MBÀ. Zaa STOP iji pụọ.",
+    },
+    yo: {
+      body: "Lafiya: oṣiṣẹ ìlera àdúgbò ṣèbẹ̀wò sí ọ lónìí? Dáhùn BẸ́Ẹ̀NI tàbí RÁRÁ. Dáhùn STOP láti jáde.",
     },
   },
 };
