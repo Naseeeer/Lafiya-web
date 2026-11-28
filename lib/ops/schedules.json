@@ -29,13 +29,13 @@
       "maxStalenessSeconds": 600
     },
     {
-      "name": "partition-maintenance",
-      "path": "/api/internal/partition-maintenance",
-      "schedule": "17 3 * * *",
+      "name": "bulk-export",
+      "path": "/api/internal/bulk-export",
+      "schedule": "* * * * *",
       "owner": "platform",
-      "maxDurationSeconds": 60,
-      "idempotency": "Creates missing monthly partitions and drops only fully terminal partitions; safe to re-run.",
-      "maxStalenessSeconds": 172800
+      "maxDurationSeconds": 300,
+      "idempotency": "Jobs claimed with SKIP LOCKED; NDJSON parts overwritten per job/resource type.",
+      "maxStalenessSeconds": 600
     },
     {
       "name": "readiness",

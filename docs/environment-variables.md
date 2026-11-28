@@ -34,6 +34,7 @@ Copy `.env.example` to `.env.local` and fill in the values. Variables marked **R
 | `PAYOUT_INDEXER_START_LEDGER` | Optional | server | public | `z.coerce.number().int().positive().optional()` |
 | `PAYOUT_INDEXER_START_PAYMENT_CURSOR` | Optional | server | public | `optionalString` |
 | `PURGE_LIMITS_CRON_SECRET` | Optional | server | secret | `optionalString` |
+| `BULK_EXPORT_CRON_SECRET` | Optional | server | secret | `optionalString` |
 | `SENTRY_DSN` | Optional | server | public | `optionalUrl` |
 | `SENTRY_ENABLED` | Optional | server | public | `booleanStringSchema.default(false)` |
 | `SOROBAN_RPC_URL` | **Required** | server | public | `z.url()` |
@@ -157,6 +158,7 @@ See `lib/rate-limit.ts` (`getClientIp`) and
 | `TRUSTED_PROXY_HOPS` | Optional | No | How many reverse-proxy hops between the real client and this process are trusted to have appended (not replaced) an X-Forwarded-For entry. Only the entry this many positions in from the right is trusted. Defaults to `1`. | `1` |
 | `CLIENT_IP_HEADER` | Optional | No | Platform-injected header that is authoritative for the client IP when present (set/overwritten by the platform itself, so it cannot carry a client-supplied value). Defaults to Vercel's `x-vercel-forwarded-for`; override for other platforms, e.g. `cf-connecting-ip` on Cloudflare. | `x-vercel-forwarded-for` |
 | `PURGE_LIMITS_CRON_SECRET` | Optional | **No — secret** | Bearer token for the authenticated `POST /api/internal/purge-expired-limits` fallback endpoint, used only where the Postgres `pg_cron` extension is unavailable (e.g. most local/CI Supabase instances). A deployment whose Postgres has `pg_cron` schedules the purge automatically and never needs this. Minimum 32 characters if set. | _(generate with `openssl rand -hex 32`)_ |
+| `BULK_EXPORT_CRON_SECRET` | Optional | **No — secret** | Bearer token for the `POST /api/internal/bulk-export` worker that drains queued FHIR Bulk Data (`$export`) jobs (issue #936). Without it the worker returns `503` and kick-off requests stay `queued`. | _(generate with `openssl rand -hex 32`)_ |
 
 ---
 
@@ -169,6 +171,7 @@ Opt-in outside production. The `SENTRY_ENABLED` flag and DSN values must be cons
 | `SENTRY_ENABLED` | Optional — **Required `true` in production** | No | Set to `true` to enable Sentry error tracking. Defaults to `false`. | `false` |
 | `NEXT_PUBLIC_SENTRY_DSN` | Conditional | Yes | Public Sentry DSN for client-side error capture. Required (with or instead of `SENTRY_DSN`) when `SENTRY_ENABLED=true`. | `https://abc123@o0.ingest.sentry.io/0` |
 | `SENTRY_DSN` | Conditional | No | Server-side Sentry DSN. Required (with or instead of `NEXT_PUBLIC_SENTRY_DSN`) when `SENTRY_ENABLED=true`. | `https://abc123@o0.ingest.sentry.io/0` |
+| `SENTRY_PROFILES_SAMPLE_RATE` | Optional | No | Fraction of sampled transactions that also get a continuous CPU/heap profile (issue #942). `0` disables profiling. Must be `0` when `SENTRY_ENABLED=false`. Keep ≤ `0.1` to stay under the 2% CPU overhead budget. | `0.1` |
 
 > **Note:** `SENTRY_AUTH_TOKEN` is a build-time-only secret used by the Sentry Next.js plugin to upload source maps. It is not validated by the runtime schema and does not appear in `.env.example`. Set it in your CI/deployment secrets if you want source map uploads.
 

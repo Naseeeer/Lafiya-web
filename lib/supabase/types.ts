@@ -310,6 +310,9 @@ export type VerificationIntentRow = {
   submitted_at: string | null;
   submitted_transaction_hash: string | null;
   terminal_at: string | null;
+  coarse_geohash: string | null;
+  location_consent_at: string | null;
+  location_purge_at: string | null;
 };
 
 export type AttestationEvidenceRow = {
@@ -475,8 +478,24 @@ export type DependantRow = {
   chronic_conditions: string[];
   emergency_contacts: EmergencyContact[];
   card_public_id: string;
+  /** Issue #871: minors need verified guardian consent to be public. */
+  card_public: boolean;
   created_at: string;
   updated_at: string;
+};
+
+/** Issue #871: guardian consent ledger row (evidence references only). */
+export type GuardianConsentRow = {
+  id: string;
+  dependant_id: string;
+  guardian_id: string;
+  method: "chw_in_person" | "facility_confirmation" | "document_review";
+  status: "pending" | "verified" | "rejected";
+  verifier_id: string | null;
+  evidence_ref: string | null;
+  policy_version: string;
+  requested_at: string;
+  verified_at: string | null;
 };
 
 export type GuardianshipRole = "primary" | "secondary";
@@ -787,6 +806,9 @@ export type Database = {
         Insert: Omit<VerificationIntentRow, "id" | "issued_at"> & {
           id?: string;
           issued_at?: string;
+          coarse_geohash?: string | null;
+          location_consent_at?: string | null;
+          location_purge_at?: string | null;
         };
         Update: Partial<Omit<VerificationIntentRow, "id">>;
         Relationships: [];
@@ -923,6 +945,12 @@ export type Database = {
         Insert: Pick<DependantRow, "guardian_user_id" | "name"> &
           Partial<DependantRow>;
         Update: Partial<Omit<DependantRow, "id" | "guardian_user_id">>;
+        Relationships: [];
+      };
+      guardian_consents: {
+        Row: GuardianConsentRow;
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       guardianships: {
@@ -1278,6 +1306,36 @@ export type Database = {
       get_my_dependants: {
         Args: Record<string, never>;
         Returns: DependantRow[];
+      };
+      record_guardian_consent: {
+        Args: {
+          p_dependant_id: string;
+          p_method: string;
+          p_evidence_ref: string | null;
+          p_policy_version: string;
+        };
+        Returns: GuardianConsentRow;
+      };
+      verify_guardian_consent: {
+        Args: {
+          p_consent_id: string;
+          p_verifier_id: string;
+          p_approved: boolean;
+          p_evidence_ref?: string | null;
+        };
+        Returns: GuardianConsentRow;
+      };
+      set_dependant_card_public: {
+        Args: {
+          p_dependant_id: string;
+          p_public: boolean;
+          p_policy_version: string;
+        };
+        Returns: undefined;
+      };
+      has_verified_guardian_consent: {
+        Args: { p_dependant_id: string; p_policy_version: string };
+        Returns: boolean;
       };
     };
     Enums: {
